@@ -1,6 +1,7 @@
 import logging
 import random
 import praw
+import os
 
 from telegram import (
     Update,
@@ -28,22 +29,20 @@ logging.basicConfig(
 # -----------------------------------------------------------------------------
 # 2) Credentials (Replace placeholders with your actual tokens/keys)
 # -----------------------------------------------------------------------------
-TELEGRAM_BOT_TOKEN = "7378773393:AAFiwJD2nXX5OO5TJCuJc9QNdNct9jm1AKA"
-
-# Reddit PRAW credentials
-REDDIT_CLIENT_ID = "4wIjtWb2Ij5bb5U7KHDTHQ"
-REDDIT_SECRET = "kepmR74UKUY0HthwPoMf1hcou1OQ5g"
-REDDIT_USER_AGENT = "memesbot"
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+REDDIT_CLIENT_ID = os.getenv("REDDIT_CLIENT_ID")
+REDDIT_SECRET = os.getenv("REDDIT_SECRET")
+# Provide a default user agent so it won't fail if the env var isn't set:
+REDDIT_USER_AGENT = os.getenv("REDDIT_USER_AGENT", "memesbot by /u/YourRedditUsername")
 
 # -----------------------------------------------------------------------------
 # 3) Initialize Reddit (PRAW)
 # -----------------------------------------------------------------------------
 reddit = praw.Reddit(
-    client_id="4wIjtWb2Ij5bb5U7KHDTHQ",  # <-- must be in quotes, so Python recognizes it as a string
-    client_secret="kepmR74UKUY0HthwPoMf1hcou1OQ5g",
-    user_agent="memesbot by /u/YourRedditUsername"
+    client_id=REDDIT_CLIENT_ID,
+    client_secret=REDDIT_SECRET,
+    user_agent=REDDIT_USER_AGENT
 )
-
 # -----------------------------------------------------------------------------
 # 4) Helper: Fetch a Meme from r/memes
 # -----------------------------------------------------------------------------
