@@ -83,3 +83,7 @@ env/
 ENV/
 env.bak/
 venv.bak/
+
+.idea/
+.DS_Store
+bot1.py
