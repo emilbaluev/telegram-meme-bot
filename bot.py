@@ -55,6 +55,8 @@ class MemeCache:
         self.shown_memes = defaultdict(set)  # множество для хранения URL показанных мемов
         self.last_update = defaultdict(float)
         self.cache_time = cache_time
+        self.liked_memes = defaultdict(list)  # user_id -> [(title, url), ...]
+        self.current_meme = {}  # Временное хранение текущего мема для лайка
 
     def needs_update(self, category):
         # Обновляем кеш если прошло время или осталось мало неповторенных мемов
@@ -105,6 +107,29 @@ class MemeCache:
         logging.info(f"Все мемы в категории {category} были показаны. Сбрасываем историю.")
         self.shown_memes[category].clear()
         return random.choice(self.cache[category])
+
+    def like_meme(self, user_id: int, title: str, url: str):
+        """Сохраняет понравившийся мем для пользователя"""
+        if (title, url) not in self.liked_memes[user_id]:
+            self.liked_memes[user_id].append((title, url))
+            return True
+        return False
+
+    def unlike_meme(self, user_id: int, url: str):
+        """Удаляет мем из сохраненных"""
+        self.liked_memes[user_id] = [(t, u) for t, u in self.liked_memes[user_id] if u != url]
+
+    def get_liked_memes(self, user_id: int):
+        """Возвращает список сохраненных мемов пользователя"""
+        return self.liked_memes[user_id]
+
+    def set_current_meme(self, user_id: int, title: str, url: str):
+        """Сохраняет текущий мем для последующего лайка"""
+        self.current_meme[user_id] = (title, url)
+
+    def get_current_meme(self, user_id: int):
+        """Получает текущий мем пользователя"""
+        return self.current_meme.get(user_id)
 
 # Создаем глобальный кеш
 meme_cache = MemeCache()
@@ -167,6 +192,9 @@ async def show_main_menu(obj):
         [
             InlineKeyboardButton("🎲 Random Meme", callback_data="random|day"),
             InlineKeyboardButton("🏆 Top Meme (Week)", callback_data="top|week"),
+        ],
+        [
+            InlineKeyboardButton("❤️ Saved Memes", callback_data="saved|show"),
         ]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
@@ -256,14 +284,50 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await show_main_menu(query.message)
         return
 
+    if data.startswith("saved|"):
+        parts = data.split("|")
+        if parts[1] == "show":
+            await show_saved_meme(update, query.from_user.id)
+            return
+        elif parts[1] in ("next", "prev"):
+            current_index = int(parts[2])
+            new_index = current_index + (1 if parts[1] == "next" else -1)
+            await show_saved_meme(update, query.from_user.id, new_index)
+            return
+        return
+
+    if data.startswith("unlike|"):
+        index = int(data.split("|")[1])
+        liked_memes = meme_cache.get_liked_memes(query.from_user.id)
+        if 0 <= index < len(liked_memes):
+            _, url = liked_memes[index]
+            meme_cache.unlike_meme(query.from_user.id, url)
+            await show_saved_meme(update, query.from_user.id, index)
+        return
+
+    if data == "like":
+        current_meme = meme_cache.get_current_meme(query.from_user.id)
+        if current_meme:
+            title, url = current_meme
+            if meme_cache.like_meme(query.from_user.id, title, url):
+                await query.answer("Мем сохранен! ❤️")
+            else:
+                await query.answer("Этот мем уже сохранен")
+        return
+
     sort, time_filter = data.split("|")
     title, meme_url = await fetch_meme(sort=sort, time_filter=time_filter)
     
     if meme_url:
         cb_data = f"{sort}|{time_filter}"
+        # Сохраняем текущий мем для возможности лайка
+        meme_cache.set_current_meme(query.from_user.id, title, meme_url)
 
         keyboard = [
-            [InlineKeyboardButton("Next Meme", callback_data=cb_data)],
+            [
+                InlineKeyboardButton("❤️", callback_data="like"),
+                InlineKeyboardButton("Next Meme", callback_data=cb_data)
+            ],
             [InlineKeyboardButton("Return to Menu", callback_data="return_menu")]
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
@@ -283,6 +347,40 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
     else:
         await query.edit_message_text("No more memes found right now.")
+
+async def show_saved_meme(update: Update, user_id: int, current_index: int = 0):
+    """Показывает сохраненный мем с кнопками навигации"""
+    liked_memes = meme_cache.get_liked_memes(user_id)
+    
+    if not liked_memes:
+        await update.callback_query.edit_message_text(
+            "У вас пока нет сохраненных мемов!",
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("Return to Menu", callback_data="return_menu")
+            ]])
+        )
+        return
+
+    current_index = current_index % len(liked_memes)
+    title, url = liked_memes[current_index]
+    
+    keyboard = [
+        [
+            InlineKeyboardButton("⬅️", callback_data=f"saved|prev|{current_index}"),
+            InlineKeyboardButton("➡️", callback_data=f"saved|next|{current_index}"),
+        ],
+        [
+            InlineKeyboardButton("❌ Unlike", callback_data=f"unlike|{current_index}"),
+            InlineKeyboardButton("Return to Menu", callback_data="return_menu")
+        ]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
+    new_media = InputMediaPhoto(media=url, caption=title or "Saved Meme")
+    await update.callback_query.edit_message_media(
+        media=new_media,
+        reply_markup=reply_markup
+    )
 
 # -----------------------------------------------------------------------------
 # 9) Main: Build and Run the Bot
