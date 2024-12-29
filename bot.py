@@ -52,20 +52,59 @@ reddit = praw.Reddit(
 class MemeCache:
     def __init__(self, cache_time=3600):  # кеш на 1 час
         self.cache = defaultdict(list)
+        self.shown_memes = defaultdict(set)  # множество для хранения URL показанных мемов
         self.last_update = defaultdict(float)
         self.cache_time = cache_time
 
     def needs_update(self, category):
-        return time.time() - self.last_update[category] > self.cache_time or not self.cache[category]
+        # Обновляем кеш если прошло время или осталось мало неповторенных мемов
+        available_memes = len(self.cache[category]) - len(self.shown_memes[category])
+        return (time.time() - self.last_update[category] > self.cache_time 
+                or available_memes < 10)
 
     def update_cache(self, category, memes):
-        self.cache[category] = memes
+        # Сохраняем только те мемы, которых нет в кеше
+        existing_urls = {meme[1] for meme in self.cache[category]}
+        new_memes = [meme for meme in memes if meme[1] not in existing_urls]
+        
+        self.cache[category].extend(new_memes)
+        
+        # Если в кеше слишком много мемов, удаляем старые
+        if len(self.cache[category]) > 100:
+            # Оставляем только непоказанные мемы и последние 50 показанных
+            unshown_memes = [meme for meme in self.cache[category] 
+                           if meme[1] not in self.shown_memes[category]]
+            shown_memes = [meme for meme in self.cache[category] 
+                         if meme[1] in self.shown_memes[category]][-50:]
+            
+            self.cache[category] = unshown_memes + shown_memes
+            # Обновляем множество показанных мемов
+            self.shown_memes[category] = {meme[1] for meme in shown_memes}
+        
         self.last_update[category] = time.time()
+        logging.info(f"Кеш обновлен для {category}. "
+                    f"Всего мемов: {len(self.cache[category])}, "
+                    f"Новых добавлено: {len(new_memes)}, "
+                    f"Уже показано: {len(self.shown_memes[category])}")
 
     def get_random_meme(self, category):
-        if self.cache[category]:
-            return random.choice(self.cache[category])
-        return None, None
+        if not self.cache[category]:
+            return None, None
+            
+        # Получаем список непоказанных мемов
+        unshown_memes = [meme for meme in self.cache[category] 
+                        if meme[1] not in self.shown_memes[category]]
+        
+        # Если есть непоказанные мемы, берем из них
+        if unshown_memes:
+            meme = random.choice(unshown_memes)
+            self.shown_memes[category].add(meme[1])
+            return meme
+        
+        # Если все мемы показаны, очищаем историю и начинаем заново
+        logging.info(f"Все мемы в категории {category} были показаны. Сбрасываем историю.")
+        self.shown_memes[category].clear()
+        return random.choice(self.cache[category])
 
 # Создаем глобальный кеш
 meme_cache = MemeCache()
